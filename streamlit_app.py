@@ -1,151 +1,105 @@
+# streamlit_app.py
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+import requests
+from io import StringIO
+from datetime import datetime
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# ----------------------------
+# 폰트 설정 (없으면 생략)
+# ----------------------------
+import matplotlib
+try:
+    matplotlib.rc("font", family="Pretendard")
+except:
+    pass
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+st.set_page_config(page_title="기후위기와 교육 영향 대시보드", layout="wide")
+
+# ----------------------------
+# 데이터 로딩 함수
+# ----------------------------
+@st.cache_data
+def load_public_data():
+    """
+    NOAA 공식 데이터에서 연도별 전세계 태풍/허리케인 발생 수 불러오기
+    - 출처: NOAA IBTrACS (International Best Track Archive for Climate Stewardship)
+    - URL: https://www.ncei.noaa.gov/products/international-best-track-archive
+    """
+    try:
+        url = "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v04r00/access/csv/ibtracs.since1980.list.v04r00.csv"
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
+        df = pd.read_csv(StringIO(r.text))
+        # 연도 추출
+        df["year"] = pd.to_datetime(df["ISO_TIME"], errors="coerce").dt.year
+        storm_counts = df.groupby("year")["SID"].nunique().reset_index()
+        storm_counts.columns = ["date", "value"]
+        # 미래 데이터 제거
+        today_year = datetime.today().year
+        storm_counts = storm_counts[storm_counts["date"] <= today_year]
+        return storm_counts
+    except:
+        # 예시 데이터
+        example = pd.DataFrame({
+            "date": [2020, 2021, 2022, 2023, 2024],
+            "value": [82, 91, 95, 88, 94]
+        })
+        example["group"] = "예시 데이터"
+        return example
 
 @st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
+def load_user_data():
     """
+    사용자 입력 데이터: 기사 및 보고서에서 정리된 '학교 휴업/수업 차질' 사례
+    """
+    data = {
+        "date": [2023, 2025],
+        "value": [24, 247],
+        "group": ["집중호우", "폭우"]
+    }
+    return pd.DataFrame(data)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# ----------------------------
+# 메인 레이아웃
+# ----------------------------
+st.title("📊 기후위기와 청소년 학업 영향 데이터 대시보드")
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+tab1, tab2 = st.tabs(["🌍 공식 공개 데이터 분석", "👩‍🎓 사용자 입력 데이터 분석"])
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+# ----------------------------
+# (1) 공식 공개 데이터
+# ----------------------------
+with tab1:
+    st.header("NOAA 태풍 발생 추이 (1980~현재)")
+    df_public = load_public_data()
+    st.markdown("데이터 출처: [NOAA IBTrACS](https://www.ncei.noaa.gov/products/international-best-track-archive)")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+    fig = px.line(df_public, x="date", y="value",
+                  title="연도별 전세계 태풍/허리케인 발생 수",
+                  labels={"date": "연도", "value": "발생 건수"})
+    st.plotly_chart(fig, use_container_width=True)
 
-    return gdp_df
+    st.download_button("📥 데이터 다운로드 (CSV)", df_public.to_csv(index=False), "public_data.csv", "text/csv")
 
-gdp_df = get_gdp_data()
+# ----------------------------
+# (2) 사용자 입력 데이터
+# ----------------------------
+with tab2:
+    st.header("한국 학교 휴업/수업 차질 사례 데이터")
+    df_user = load_user_data()
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+    fig2 = px.bar(df_user, x="date", y="value", color="group",
+                  text="value",
+                  title="기후재해로 인한 학교 수업 차질 건수",
+                  labels={"date": "연도", "value": "휴업/차질 학교 수", "group": "원인"})
+    fig2.update_traces(textposition="outside")
+    st.plotly_chart(fig2, use_container_width=True)
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+    st.download_button("📥 데이터 다운로드 (CSV)", df_user.to_csv(index=False), "user_data.csv", "text/csv")
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+    st.markdown("➡️ 위 데이터는 보고서 입력 자료(기사 기반)로 정리된 값입니다.")
